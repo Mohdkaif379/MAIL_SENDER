@@ -50,7 +50,7 @@ app.post("/contact", async (req, res) => {
 
 // Simple GET route
 app.get("/", (req, res) => {
-  res.status(200).json({ message: "Server is running!" });
+  res.status(200).json({ message: "MOHD KAIF BACKEND DEVELOPER!" });
 });
 
 
