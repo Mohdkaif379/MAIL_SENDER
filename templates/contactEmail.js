@@ -10,9 +10,6 @@ export function contactEmailTemplate(name, email, message) {
         <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
         <p style="margin: 0;">Best regards,</p>
         <p style="margin: 0; font-weight: bold;">${name}</p>
-        <p style="font-size: 12px; color: #777; margin-top: 5px;">
-          This email was sent from your website contact form.
-        </p>
       </div>
     </div>
   `;
