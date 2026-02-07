@@ -1,0 +1,23 @@
+{
+  "name": "emailsender",
+  "version": "1.0.0",
+  "description": "Node.js API to send emails from a contact form, ready for Vercel",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
+  "keywords": ["email", "contact form", "nodemailer", "express", "vercel"],
+  "author": "Your Name",
+  "license": "ISC",
+  "dependencies": {
+    "cors": "^2.8.6",
+    "dotenv": "^17.2.4",
+    "express": "^5.2.1",
+    "nodemailer": "^8.0.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.11"
+  }
+}
