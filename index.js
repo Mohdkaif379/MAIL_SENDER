@@ -74,9 +74,26 @@ const getCookieValue = (cookieHeader, name) => {
 
 const normalizeUrl = value => {
   try {
-    const parsed = new URL(String(value));
+    const raw = String(value).trim();
+    const withProtocol = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+    const parsed = new URL(withProtocol);
+    const hostname = parsed.hostname.replace(/^www\./i, "").toLowerCase();
+    const pathname = parsed.pathname.replace(/\/+$/, "") || "/";
     parsed.hash = "";
-    return `${parsed.origin}${parsed.pathname}`;
+    parsed.search = "";
+    return `${parsed.protocol}//${hostname}${pathname}`;
+  } catch {
+    return null;
+  }
+};
+
+const normalizeSiteKey = value => {
+  try {
+    const raw = String(value).trim();
+    const withProtocol = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+    const parsed = new URL(withProtocol);
+    const hostname = parsed.hostname.replace(/^www\./i, "").toLowerCase();
+    return `${parsed.protocol}//${hostname}`;
   } catch {
     return null;
   }
@@ -187,17 +204,21 @@ app.get("/api/visit", (req, res) => {
   const existingVisitorId = getCookieValue(req.headers.cookie, "vid");
   const visitorIdFromQuery = typeof req.query.visitorId === "string" ? req.query.visitorId.trim() : "";
   const acceptedLanguage = (req.headers["accept-language"] || "").slice(0, 100);
-  const rawUrl = req.query.url || req.headers.referer || "";
+  const incomingUrl = req.query.url || req.headers.referer || req.headers.origin || "";
+  const rawUrl = incomingUrl || TRACKED_URL;
   const trackedUrl = normalizeUrl(TRACKED_URL);
   const pageUrl = normalizeUrl(rawUrl);
+  const trackedSiteKey = normalizeSiteKey(TRACKED_URL);
+  const requestSiteKey = normalizeSiteKey(rawUrl);
   const visitDay = getVisitDay();
   let visitorKey = "";
 
-  if (!trackedUrl || !pageUrl || pageUrl !== trackedUrl) {
+  if (!trackedSiteKey || !requestSiteKey || requestSiteKey !== trackedSiteKey) {
     return res.status(200).json({
       tracked: false,
       message: "URL is not tracked",
       trackedUrl: TRACKED_URL,
+      receivedUrl: incomingUrl || null,
     });
   }
 
@@ -211,7 +232,8 @@ app.get("/api/visit", (req, res) => {
     res.setHeader("Set-Cookie", `vid=${newVisitorId}; Path=/; Max-Age=31536000; SameSite=None; Secure`);
   }
 
-  console.log(`[VISIT] /api/visit hit | ip=${ip} | url=${pageUrl} | day=${visitDay} | time=${new Date().toISOString()}`);
+  const trackedPage = pageUrl || trackedUrl;
+  console.log(`[VISIT] /api/visit hit | ip=${ip} | url=${trackedPage} | day=${visitDay} | time=${new Date().toISOString()}`);
 
   db.query(
     "INSERT IGNORE INTO visitor_keys (visitor_key, ip_address, user_agent) VALUES (?, ?, ?)",
@@ -221,18 +243,18 @@ app.get("/api/visit", (req, res) => {
 
       db.query(
         "INSERT IGNORE INTO daily_page_visits (page_url, visitor_key, visit_day) VALUES (?, ?, ?)",
-        [pageUrl, visitorKey, visitDay],
+        [trackedPage, visitorKey, visitDay],
         insertErr => {
           if (insertErr) return res.json({ error: insertErr });
 
           db.query(
             "SELECT COUNT(*) AS total FROM daily_page_visits WHERE page_url = ? AND visit_day = ?",
-            [pageUrl, visitDay],
+            [trackedPage, visitDay],
             (countErr, count) => {
               if (countErr) return res.json({ error: countErr });
               res.json({
                 tracked: true,
-                url: pageUrl,
+                url: trackedPage,
                 day: visitDay,
                 visits: count[0].total,
               });
