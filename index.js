@@ -138,6 +138,24 @@ app.get("/api/visit", (req, res) => {
   });
 });
 
+const startAutoVisitRunner = port => {
+  const baseUrl = process.env.AUTO_VISIT_BASE_URL || `http://127.0.0.1:${port}`;
+
+  setInterval(async () => {
+    try {
+      const response = await fetch(`${baseUrl}/api/visit`);
+      const payload = await response.json();
+      console.log(`[AUTO] /api/visit called | status=${response.status} | visits=${payload.visits ?? "n/a"}`);
+    } catch (error) {
+      console.log("Auto /api/visit error:", error.message);
+    }
+  }, 5000);
+};
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running on port http://localhost:${PORT}`));
+app.listen(PORT, () => {
+  console.log(`Server running on port http://localhost:${PORT}`);
+  console.log(`Auto visit base URL: ${process.env.AUTO_VISIT_BASE_URL || `http://127.0.0.1:${PORT}`}`);
+  console.log("Auto /api/visit runner started (every 5 seconds)");
+  startAutoVisitRunner(PORT);
+});
