@@ -122,6 +122,7 @@ app.get("/", (req, res) => {
 
 
 app.get("/api/visit", (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
   const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
 
   db.query("SELECT * FROM visitors WHERE ip_address = ?", [ip], (err, result) => {
