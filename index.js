@@ -44,6 +44,10 @@ app.use(express.json());
 app.use(cors({ origin: "*" }));
 
 const createTransporter = () => {
+  const connectionTimeout = Number(process.env.EMAIL_CONNECTION_TIMEOUT || 60000);
+  const greetingTimeout = Number(process.env.EMAIL_GREETING_TIMEOUT || 60000);
+  const socketTimeout = Number(process.env.EMAIL_SOCKET_TIMEOUT || 60000);
+
   return nodemailer.createTransport({
     host: process.env.EMAIL_HOST,
     port: process.env.EMAIL_PORT,
@@ -52,9 +56,9 @@ const createTransporter = () => {
       user: process.env.EMAIL_USER,
       pass: process.env.EMAIL_PASS,
     },
-    connectionTimeout: 10000,
-    greetingTimeout: 10000,
-    socketTimeout: 10000,
+    connectionTimeout,
+    greetingTimeout,
+    socketTimeout,
   });
 };
 
