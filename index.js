@@ -2,12 +2,42 @@ import express from "express";
 import nodemailer from "nodemailer";
 import dotenv from "dotenv";
 import cors from "cors";
+import mysql from "mysql2";
 import { contactEmailTemplate } from "./templates/contactEmail.js";
 import { serviceInquiryEmailTemplate } from "./templates/serviceInquiryEmail.js";
 
 dotenv.config();
-
+const db = mysql.createConnection(process.env.DATABASE_URL);
 const app = express();
+
+app.set("trust proxy", true);
+
+const ensureVisitorsTable = () => {
+  const createVisitorsTableSql = `
+    CREATE TABLE IF NOT EXISTS visitors (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      ip_address VARCHAR(45) NOT NULL UNIQUE,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `;
+
+  db.query(createVisitorsTableSql, err => {
+    if (err) {
+      console.log("Visitors table create error:", err);
+      return;
+    }
+    console.log("Visitors table ready");
+  });
+};
+
+db.connect(err => {
+  if (err) {
+    console.log("MySQL Error:", err);
+  } else {
+    console.log("MySQL Connected");
+    ensureVisitorsTable();
+  }
+});
 
 // Middlewares
 app.use(express.json());
@@ -85,6 +115,25 @@ app.post("/service-inquiry", async (req, res) => {
 app.get("/", (req, res) => {
   res.status(200).json({ message: "MOHD KAIF BACKEND DEVELOPER!" });
 });
+
+
+app.get("/api/visit", (req, res) => {
+  const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
+
+  db.query("SELECT * FROM visitors WHERE ip_address = ?", [ip], (err, result) => {
+    if (err) return res.json({ error: err });
+
+    if (result.length === 0) {
+      db.query("INSERT INTO visitors (ip_address) VALUES (?)", [ip]);
+    }
+
+    db.query("SELECT COUNT(*) AS total", (err, count) => {
+      if (err) return res.json({ error: err });
+      res.json({ visits: count[0].total });
+    });
+  });
+});
+
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port http://localhost:${PORT}`));
