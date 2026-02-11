@@ -120,10 +120,10 @@ app.get("/", (req, res) => {
   res.status(200).json({ message: "MOHD KAIF BACKEND DEVELOPER!" });
 });
 
-
 app.get("/api/visit", (req, res) => {
   res.setHeader("Cache-Control", "no-store");
   const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
+  console.log(`[VISIT] /api/visit hit | ip=${ip} | time=${new Date().toISOString()}`);
 
   db.query("SELECT * FROM visitors WHERE ip_address = ?", [ip], (err, result) => {
     if (err) return res.json({ error: err });
