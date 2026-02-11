@@ -3,32 +3,92 @@ import nodemailer from "nodemailer";
 import dotenv from "dotenv";
 import cors from "cors";
 import mysql from "mysql2";
+import { randomUUID } from "node:crypto";
 import { contactEmailTemplate } from "./templates/contactEmail.js";
 import { serviceInquiryEmailTemplate } from "./templates/serviceInquiryEmail.js";
 
 dotenv.config();
 const db = mysql.createConnection(process.env.DATABASE_URL);
 const app = express();
+const TRACKED_URL = process.env.TRACKED_URL || "https://webbuyer.netlify.app/";
+const VISIT_TIMEZONE = process.env.VISIT_TIMEZONE || "Asia/Kolkata";
 
 app.set("trust proxy", true);
 
 const ensureVisitorsTable = () => {
-  const createVisitorsTableSql = `
-    CREATE TABLE IF NOT EXISTS visitors (
+  const createVisitorKeysSql = `
+    CREATE TABLE IF NOT EXISTS visitor_keys (
       id INT AUTO_INCREMENT PRIMARY KEY,
-      ip_address VARCHAR(45) NOT NULL UNIQUE,
+      visitor_key VARCHAR(255) NOT NULL UNIQUE,
+      ip_address VARCHAR(45),
+      user_agent VARCHAR(255),
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
   `;
 
-  db.query(createVisitorsTableSql, err => {
+  const createDailyPageVisitsSql = `
+    CREATE TABLE IF NOT EXISTS daily_page_visits (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      page_url VARCHAR(1024) NOT NULL,
+      visitor_key VARCHAR(255) NOT NULL,
+      visit_day DATE NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uniq_daily_page_visitor (page_url(255), visitor_key, visit_day)
+    )
+  `;
+
+  db.query(createVisitorKeysSql, err => {
     if (err) {
-      console.log("Visitors table create error:", err);
+      console.log("Visitor keys table create error:", err);
       return;
     }
-    console.log("Visitors table ready");
+    db.query(createDailyPageVisitsSql, innerErr => {
+      if (innerErr) {
+        console.log("Daily page visits table create error:", innerErr);
+        return;
+      }
+      console.log("Visitor tracking tables ready");
+    });
   });
 };
+
+const getIpAddress = req => {
+  const forwardedFor = req.headers["x-forwarded-for"];
+  if (typeof forwardedFor === "string" && forwardedFor.length > 0) {
+    return forwardedFor.split(",")[0].trim();
+  }
+  return req.socket.remoteAddress || "unknown";
+};
+
+const getCookieValue = (cookieHeader, name) => {
+  if (!cookieHeader) return null;
+  const parts = cookieHeader.split(";");
+  for (const part of parts) {
+    const [cookieName, ...rest] = part.trim().split("=");
+    if (cookieName === name) {
+      return decodeURIComponent(rest.join("="));
+    }
+  }
+  return null;
+};
+
+const normalizeUrl = value => {
+  try {
+    const parsed = new URL(String(value));
+    parsed.hash = "";
+    return `${parsed.origin}${parsed.pathname}`;
+  } catch {
+    return null;
+  }
+};
+
+const getVisitDay = () =>
+  new Intl.DateTimeFormat("en-CA", {
+    timeZone: VISIT_TIMEZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
 
 db.connect(err => {
   if (err) {
@@ -122,41 +182,69 @@ app.get("/", (req, res) => {
 
 app.get("/api/visit", (req, res) => {
   res.setHeader("Cache-Control", "no-store");
-  const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
-  console.log(`[VISIT] /api/visit hit | ip=${ip} | time=${new Date().toISOString()}`);
+  const ip = getIpAddress(req);
+  const userAgent = (req.headers["user-agent"] || "unknown").slice(0, 255);
+  const existingVisitorId = getCookieValue(req.headers.cookie, "vid");
+  const visitorIdFromQuery = typeof req.query.visitorId === "string" ? req.query.visitorId.trim() : "";
+  const acceptedLanguage = (req.headers["accept-language"] || "").slice(0, 100);
+  const rawUrl = req.query.url || req.headers.referer || "";
+  const trackedUrl = normalizeUrl(TRACKED_URL);
+  const pageUrl = normalizeUrl(rawUrl);
+  const visitDay = getVisitDay();
+  let visitorKey = "";
 
-  db.query("SELECT * FROM visitors WHERE ip_address = ?", [ip], (err, result) => {
-    if (err) return res.json({ error: err });
-
-    if (result.length === 0) {
-      db.query("INSERT INTO visitors (ip_address) VALUES (?)", [ip]);
-    }
-
-    db.query("SELECT COUNT(*) AS total", (err, count) => {
-      if (err) return res.json({ error: err });
-      res.json({ visits: count[0].total });
+  if (!trackedUrl || !pageUrl || pageUrl !== trackedUrl) {
+    return res.status(200).json({
+      tracked: false,
+      message: "URL is not tracked",
+      trackedUrl: TRACKED_URL,
     });
-  });
-});
+  }
 
-const startAutoVisitRunner = port => {
-  const baseUrl = process.env.AUTO_VISIT_BASE_URL || `http://127.0.0.1:${port}`;
+  if (visitorIdFromQuery) {
+    visitorKey = `vid:${visitorIdFromQuery.slice(0, 100)}`;
+  } else if (existingVisitorId) {
+    visitorKey = `vid:${existingVisitorId.slice(0, 100)}`;
+  } else {
+    visitorKey = `fp:${ip}|${userAgent}|${acceptedLanguage}`;
+    const newVisitorId = randomUUID();
+    res.setHeader("Set-Cookie", `vid=${newVisitorId}; Path=/; Max-Age=31536000; SameSite=None; Secure`);
+  }
 
-  setInterval(async () => {
-    try {
-      const response = await fetch(`${baseUrl}/api/visit`);
-      const payload = await response.json();
-      console.log(`[AUTO] /api/visit called | status=${response.status} | visits=${payload.visits ?? "n/a"}`);
-    } catch (error) {
-      console.log("Auto /api/visit error:", error.message);
+  console.log(`[VISIT] /api/visit hit | ip=${ip} | url=${pageUrl} | day=${visitDay} | time=${new Date().toISOString()}`);
+
+  db.query(
+    "INSERT IGNORE INTO visitor_keys (visitor_key, ip_address, user_agent) VALUES (?, ?, ?)",
+    [visitorKey, ip, userAgent],
+    err => {
+      if (err) return res.json({ error: err });
+
+      db.query(
+        "INSERT IGNORE INTO daily_page_visits (page_url, visitor_key, visit_day) VALUES (?, ?, ?)",
+        [pageUrl, visitorKey, visitDay],
+        insertErr => {
+          if (insertErr) return res.json({ error: insertErr });
+
+          db.query(
+            "SELECT COUNT(*) AS total FROM daily_page_visits WHERE page_url = ? AND visit_day = ?",
+            [pageUrl, visitDay],
+            (countErr, count) => {
+              if (countErr) return res.json({ error: countErr });
+              res.json({
+                tracked: true,
+                url: pageUrl,
+                day: visitDay,
+                visits: count[0].total,
+              });
+            }
+          );
+        }
+      );
     }
-  }, 5000);
-};
+  );
+});
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server running on port http://localhost:${PORT}`);
-  console.log(`Auto visit base URL: ${process.env.AUTO_VISIT_BASE_URL || `http://127.0.0.1:${PORT}`}`);
-  console.log("Auto /api/visit runner started (every 5 seconds)");
-  startAutoVisitRunner(PORT);
 });
