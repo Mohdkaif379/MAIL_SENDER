@@ -266,7 +266,65 @@ app.get("/api/visit", (req, res) => {
   );
 });
 
+app.delete("/api/visit", (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  const all = String(req.query.all || "").toLowerCase() === "true";
+  const day = typeof req.query.day === "string" ? req.query.day : getVisitDay();
+  const rawUrl = typeof req.query.url === "string" ? req.query.url : TRACKED_URL;
+  const pageUrl = normalizeUrl(rawUrl);
+
+  if (all) {
+    db.query("DELETE FROM daily_page_visits", err => {
+      if (err) return res.status(500).json({ error: err });
+      console.log("[VISIT] all visit records deleted");
+      return res.json({ deleted: true, scope: "all" });
+    });
+    return;
+  }
+
+  if (!pageUrl) {
+    return res.status(400).json({ error: "Invalid url" });
+  }
+
+  db.query(
+    "DELETE FROM daily_page_visits WHERE page_url = ? AND visit_day = ?",
+    [pageUrl, day],
+    (err, result) => {
+      if (err) return res.status(500).json({ error: err });
+      console.log(`[VISIT] visit records deleted | url=${pageUrl} | day=${day} | rows=${result.affectedRows}`);
+      return res.json({
+        deleted: true,
+        scope: "daily",
+        url: pageUrl,
+        day,
+        rows: result.affectedRows,
+      });
+    }
+  );
+});
+
+const startAutoVisitRunner = port => {
+  const baseUrl = process.env.AUTO_VISIT_BASE_URL || `http://127.0.0.1:${port}`;
+  const encodedTrackedUrl = encodeURIComponent(TRACKED_URL);
+
+  setInterval(async () => {
+    try {
+      const response = await fetch(
+        `${baseUrl}/api/visit?url=${encodedTrackedUrl}&visitorId=server-auto-runner`
+      );
+      const payload = await response.json();
+      console.log(
+        `[AUTO] /api/visit called (2s) | status=${response.status} | tracked=${payload.tracked} | visits=${payload.visits ?? "n/a"}`
+      );
+    } catch (error) {
+      console.log("Auto /api/visit error:", error.message);
+    }
+  }, 2000);
+};
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server running on port http://localhost:${PORT}`);
+  console.log("Auto /api/visit runner started (every 2 seconds)");
+  startAutoVisitRunner(PORT);
 });
